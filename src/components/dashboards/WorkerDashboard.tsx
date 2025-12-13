@@ -154,7 +154,12 @@ export default function WorkerDashboard() {
                                 <CheckCircle2 className="w-4 h-4 mr-2" />
                                 Upload & Resolve
                             </Button>
-                            <Button size="sm" variant="outline" className="flex-1">
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="flex-1"
+                              onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${task.geo_latitude},${task.geo_longitude}`, '_blank')}
+                            >
                                 <Map className="w-4 h-4 mr-2" />
                                 Navigation
                             </Button>
@@ -173,17 +178,30 @@ export default function WorkerDashboard() {
                     <Map className="w-4 h-4 mr-2" /> Live Field Map
                  </CardTitle>
               </CardHeader>
-              <div className="h-[400px] w-full bg-slate-100 relative group">
-                  {/* Better Map Placeholder with Image */}
-                  <div className="absolute inset-0 bg-slate-200 flex items-center justify-center overflow-hidden">
-                        <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:16px_16px]"></div>
-                        <div className="text-slate-400 text-center relative z-10">
-                            <MapPin className="h-12 w-12 mx-auto mb-2 text-slate-400 animate-bounce" />
-                            <p className="font-medium">Interactive Map Module</p>
-                            <p className="text-xs text-slate-400">Loading geospatial data...</p>
+               <div className="h-[400px] w-full bg-slate-100 relative group overflow-hidden">
+                  {tasks.length > 0 && tasks[0].geo_latitude ? (
+                      <iframe
+                        width="100%"
+                        height="100%"
+                        style={{ border: 0 }}
+                        loading="lazy"
+                        allowFullScreen
+                        referrerPolicy="no-referrer-when-downgrade"
+                        // src={`https://www.google.com/maps/embed/v1/place?key=&q=${tasks[0].geo_latitude},${tasks[0].geo_longitude}&zoom=14`}
+                        // Note: The above Embed API requires a key. 
+                        // FALLBACK: Use the simple output embed without key if possible or OpenStreetMap if key fails.
+                        // Actually, for simple keyless embed, we can use:
+                        src={`https://maps.google.com/maps?q=${tasks[0].geo_latitude},${tasks[0].geo_longitude}&z=15&output=embed`}
+                      ></iframe>
+                  ) : (
+                      <div className="absolute inset-0 bg-slate-200 flex items-center justify-center">
+                        <div className="text-center">
+                            <MapPin className="h-10 w-10 mx-auto text-slate-400 mb-2" />
+                            <p className="text-slate-500">Select a task with location data to view map</p>
                         </div>
-                  </div>
-              </div>
+                      </div>
+                  )}
+               </div>
            </Card>
         </div>
       </div>

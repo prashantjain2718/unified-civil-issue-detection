@@ -63,7 +63,10 @@ app.post('/api/report_issue', upload.single('image'), async (req, res) => {
       description: req.body.description || aiResult.description || 'Reported by citizen',
       status: 'Reported',
       sla_due_date: calculateSLA(aiResult.severity),
+      sla_due_date: calculateSLA(aiResult.severity),
       reporter_id: req.body.reporter_id || 'anonymous',
+      geo_latitude: req.body.geo_latitude || null,
+      geo_longitude: req.body.geo_longitude || null,
     };
 
     // 2. Save to DB via Model
