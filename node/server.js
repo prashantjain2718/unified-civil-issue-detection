@@ -5,8 +5,9 @@ const path = require('path');
 const fs = require('fs');
 const { classifyIssue, verifyResolution } = require('./geminiService');
 const issueModel = require('./issueModel');
+const authController = require('./authController');
 
-require('dotenv').config();
+require('dotenv').config(); // Load env vars first
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -16,10 +17,14 @@ const port = process.env.PORT || 5000;
 ======================= */
 
 app.use(cors());
-
-
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+/* =======================
+   AUTH ROUTES
+======================= */
+app.post('/api/auth/signup', authController.signup);
+app.post('/api/auth/login', authController.login);
 
 /* =======================
    UPLOADS SETUP
@@ -52,10 +57,9 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     uptime: process.uptime(),
-    timestamp: new Date()
+    timestamp: new Date(),
   });
 });
-
 
 /**
  * REPORT ISSUE
@@ -81,10 +85,7 @@ app.post('/api/report_issue', upload.single('image'), async (req, res, next) => 
       issue_type: aiResult.issue_type || 'Unknown',
       severity: aiResult.severity || 'Medium',
       department_assigned: aiResult.department || 'Admin',
-      description:
-        req.body.description ||
-        aiResult.description ||
-        'Reported by citizen',
+      description: req.body.description || aiResult.description || 'Reported by citizen',
       status: 'Reported',
       sla_due_date: calculateSLA(aiResult.severity),
       reporter_id: req.body.reporter_id || 'anonymous',
@@ -107,79 +108,135 @@ app.post('/api/report_issue', upload.single('image'), async (req, res, next) => 
 /**
  * RESOLVE ISSUE
  */
-app.post(
-  '/api/resolve_issue',
-  upload.single('image_after'),
-  async (req, res, next) => {
-    try {
-      const { issue_id } = req.body;
+app.post('/api/resolve_issue', upload.single('image_after'), async (req, res, next) => {
+  try {
+    const { issue_id } = req.body;
 
-      if (!req.file || !issue_id) {
-        return res
-          .status(400)
-          .json({ error: 'Missing image or issue_id' });
-      }
-
-      const issue = await issueModel.getIssueById(issue_id);
-      if (!issue) {
-        return res.status(404).json({ error: 'Issue not found' });
-      }
-
-      let beforeImagePath = issue.image_url_before;
-      if (beforeImagePath.startsWith('/uploads')) {
-        beforeImagePath = path.join(__dirname, beforeImagePath);
-      }
-
-      const afterImagePath = req.file.path;
-
-      const beforeBuffer = fs.existsSync(beforeImagePath)
-        ? fs.readFileSync(beforeImagePath)
-        : fs.readFileSync(afterImagePath); // fallback
-
-      const afterBuffer = fs.readFileSync(afterImagePath);
-
-      const verificationResult = await verifyResolution(
-        beforeBuffer,
-        afterBuffer,
-        req.file.mimetype
-      );
-
-      console.log('Gemini Verification:', verificationResult);
-
-      if (verificationResult.resolved) {
-        const imageUrlAfter = `/uploads/${req.file.filename}`;
-        const updatedIssue = await issueModel.resolveIssue(
-          issue_id,
-          imageUrlAfter
-        );
-
-        return res.json({
-          success: true,
-          resolved: true,
-          message: 'Issue verified and resolved!',
-          issue: updatedIssue,
-        });
-      }
-
-      res.json({
-        success: false,
-        resolved: false,
-        message: 'AI determination: Issue not fully resolved.',
-        explanation: verificationResult.explanation,
-      });
-    } catch (error) {
-      next(error);
+    if (!req.file || !issue_id) {
+      return res.status(400).json({ error: 'Missing image or issue_id' });
     }
+
+    const issue = await issueModel.getIssueById(issue_id);
+    if (!issue) {
+      return res.status(404).json({ error: 'Issue not found' });
+    }
+
+    let beforeImagePath = issue.image_url_before;
+    if (beforeImagePath.startsWith('/uploads')) {
+      beforeImagePath = path.join(__dirname, beforeImagePath);
+    }
+
+    const afterImagePath = req.file.path;
+
+    const beforeBuffer = fs.existsSync(beforeImagePath)
+      ? fs.readFileSync(beforeImagePath)
+      : fs.readFileSync(afterImagePath); // fallback
+
+    const afterBuffer = fs.readFileSync(afterImagePath);
+
+    const verificationResult = await verifyResolution(beforeBuffer, afterBuffer, req.file.mimetype);
+
+    console.log('Gemini Verification:', verificationResult);
+
+    if (verificationResult.resolved) {
+      const imageUrlAfter = `/uploads/${req.file.filename}`;
+      const updatedIssue = await issueModel.resolveIssue(issue_id, imageUrlAfter);
+
+      return res.json({
+        success: true,
+        resolved: true,
+        message: 'Issue verified and resolved!',
+        issue: updatedIssue,
+      });
+    }
+
+    res.json({
+      success: false,
+      resolved: false,
+      message: 'AI determination: Issue not fully resolved.',
+      explanation: verificationResult.explanation,
+    });
+  } catch (error) {
+    next(error);
   }
-);
+});
 
 /**
  * GET ALL ISSUES
  */
-app.get('/api/issues', async (req, res, next) => {
+const authenticateToken = require('./authMiddleware');
+
+/**
+ * GET ALL ISSUES (Protected & Filtered)
+ */
+app.get('/api/issues', authenticateToken, async (req, res, next) => {
   try {
-    const issues = await issueModel.getAllIssues();
+    const user = req.user;
+    const filters = {};
+
+    console.log('Fetching issues for user:', user);
+
+    if (user.role === 'CITIZEN') {
+      // Citizens see only their own issues (filtered by email for now as that's likely what reporter_id uses)
+      // Note: In a real app, ensure reporter_id consistency (ID vs Email).
+      // Current seed uses 'citizen_demo', so this might return nothing for new users unless they report something.
+      // We'll use user.email as the matcher.
+      filters.reporter_id = user.email; // OR user.userId if you plan to change DB schema
+    } else if (user.role === 'WORKER') {
+      filters.assigned_worker_id = user.email; // Assuming worker assigned by email
+    } else if (user.role === 'DEPT_ADMIN') {
+      filters.department_assigned = user.department;
+    } else if (user.role === 'SUPER_ADMIN') {
+      // No filters, sees all
+    }
+
+    const issues = await issueModel.getAllIssues(filters);
     res.json(issues);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET WORKERS (Protected)
+ */
+app.get('/api/workers', authenticateToken, async (req, res, next) => {
+  try {
+    const user = req.user;
+    let deptFilter = null;
+
+    if (user.role === 'DEPT_ADMIN') {
+      deptFilter = user.department;
+    } else if (user.role === 'SUPER_ADMIN') {
+      // Sees all, no filter
+    } else {
+      return res.status(403).json({ error: 'Unauthorized to view workers' });
+    }
+
+    const workers = await issueModel.getWorkersByDept(deptFilter);
+    res.json(workers);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * ASSIGN ISSUE (Protected: Dept Admin)
+ */
+app.post('/api/issues/assign', authenticateToken, async (req, res, next) => {
+  try {
+    const { issueId, workerEmail } = req.body;
+    const user = req.user;
+
+    if (user.role !== 'DEPT_ADMIN' && user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Unauthorized to assign issues' });
+    }
+
+    // Optional: Verify issue belongs to Dept Admin's dept
+    // For now, we trust the admin or rely on frontend not to show wrong issues.
+
+    const updatedIssue = await issueModel.assignIssue(issueId, workerEmail);
+    res.json({ success: true, issue: updatedIssue });
   } catch (error) {
     next(error);
   }
@@ -194,10 +251,7 @@ app.use((err, req, res, next) => {
 
   res.status(500).json({
     error: 'Internal Server Error',
-    details:
-      process.env.NODE_ENV === 'development'
-        ? err.message
-        : undefined,
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined,
   });
 });
 
@@ -207,10 +261,8 @@ app.use((err, req, res, next) => {
 
 function calculateSLA(severity) {
   const now = new Date();
-  if (severity === 'High')
-    return new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  if (severity === 'Medium')
-    return new Date(now.getTime() + 48 * 60 * 60 * 1000);
+  if (severity === 'High') return new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  if (severity === 'Medium') return new Date(now.getTime() + 48 * 60 * 60 * 1000);
   return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 }
 
