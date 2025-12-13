@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { Camera, Upload, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
+import { Camera, Upload, Loader2, CheckCircle, MapPin } from 'lucide-react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 
@@ -26,7 +26,32 @@ export const ReportIssue = () => {
   });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [location, setLocation] = useState<{lat: number, long: number} | null>(null);
+  const [gettingLocation, setGettingLocation] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<any>(null);
+
+  const handleGetLocation = () => {
+    setGettingLocation(true);
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                setLocation({
+                    lat: position.coords.latitude,
+                    long: position.coords.longitude
+                });
+                setGettingLocation(false);
+            },
+            (error) => {
+                console.error("Error getting location: ", error);
+                alert("Unable to retrieve your location.");
+                setGettingLocation(false);
+            }
+        );
+    } else {
+        alert("Geolocation is not supported by your browser.");
+        setGettingLocation(false);
+    }
+  };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -65,6 +90,10 @@ export const ReportIssue = () => {
     data.append('image', selectedFile);
     // Use logged in user ID or fallback
     data.append('reporter_id', user?.id || 'anonymous_citizen');
+    if (location) {
+        data.append('geo_latitude', location.lat.toString());
+        data.append('geo_longitude', location.long.toString());
+    }
     
     // We can also send the manual description to override/append to AI description
     // But currently backend doesn't accept 'description' field to override AI.
@@ -150,6 +179,32 @@ export const ReportIssue = () => {
                 )}
               </div>
 
+              {/* Location Section */}
+              <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
+                 <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-full ${location ? 'bg-green-100 text-green-600' : 'bg-slate-200 text-slate-500'}`}>
+                        <MapPin className="h-5 w-5" />
+                    </div>
+                    <div>
+                        <h3 className="text-sm font-medium text-slate-900">Incident Location</h3>
+                        <p className="text-xs text-slate-500">
+                            {location 
+                                ? `${location.lat.toFixed(6)}, ${location.long.toFixed(6)}` 
+                                : "Add location for faster resolution"}
+                        </p>
+                    </div>
+                 </div>
+                 <Button 
+                    type="button" 
+                    variant={location ? "secondary" : "outline"} 
+                    size="sm"
+                    onClick={handleGetLocation}
+                    disabled={gettingLocation}
+                 >
+                    {gettingLocation ? <Loader2 className="h-4 w-4 animate-spin" /> : location ? "Update" : "Get Location"}
+                 </Button>
+              </div>
+
               {aiAnalysis && (
                 <div className="rounded-md bg-green-50 p-4 border border-green-200">
                     <div className="flex items-start">
@@ -186,7 +241,7 @@ export const ReportIssue = () => {
                 />
               </div>
 
-              <Button type="submit" className="w-full" size="lg" disabled={loading || !selectedFile}>
+              <Button type="submit" className="w-full" size="lg" disabled={loading || uploading || !selectedFile}>
                 {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analyzing & Submitting...</> : 'Submit Report'}
               </Button>
             </form>
